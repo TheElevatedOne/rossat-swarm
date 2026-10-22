@@ -18,6 +18,6 @@ pkgbase = rossat-swarm-bin
 	conflicts = rossat-swarm
 	conflicts = rossat-swarm-git
 	source = rossat-swarm-1.0.0-x86_64.tar.gz::https://github.com/TheElevatedOne/rossat-swarm/releases/download/1.0.0/rossat-swarm-1.0.0-x86_64.tar.gz
-	sha256sums = SKIP
+	sha256sums = ba8fd8150016cc84f40ae5fc62a30c175c442de576048ced13e16a807115cf3c
 
 pkgname = rossat-swarm-bin

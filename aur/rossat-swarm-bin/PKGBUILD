@@ -13,7 +13,7 @@ conflicts=("${_pkgname}" "${_pkgname}-git")
 install="${_pkgname}.install"
 source=("${_pkgname}-${pkgver}-x86_64.tar.gz::${url}/releases/download/${pkgver}/${_pkgname}-${pkgver}-x86_64.tar.gz")
 # Built by .github/workflows/release.yml; run `updpkgsums` once the release exists.
-sha256sums=('SKIP')
+sha256sums=('ba8fd8150016cc84f40ae5fc62a30c175c442de576048ced13e16a807115cf3c')
 
 package() {
     cp -a "${srcdir}/usr" "${pkgdir}/"
