@@ -65,8 +65,10 @@ struct app_state {
     GtkWidget *shift_style = nullptr;
     GtkWidget *shift_hint = nullptr;
     GtkWidget *theme_swatches[3] = {};
-    GtkWidget *engine_switch = nullptr;
     GtkWidget *engine_label = nullptr;
+    bool engine_busy = false;
+    int engine_retry = 0;
+    guint engine_source = 0;
     GtkWidget *colors_panel = nullptr;
     rossat_engine *engine = nullptr;
     guint preview_source = 0;
@@ -88,11 +90,12 @@ struct app_state {
     GtkWidget *dpi_panel = nullptr;
     GtkWidget *polling_panel = nullptr;
     bool tray_enabled = false;     // effective for this run (pref or --minimized)
+    GtkWidget *auto_apply = nullptr;
+    guint auto_apply_source = 0;
     bool quitting = false;
 #ifdef ROSSAT_HAVE_TRAY
     AppIndicator *indicator = nullptr;
     GtkWidget *tray_show_item = nullptr;
-    GtkWidget *tray_engine_item = nullptr;
 #endif
 
     rossat_device *dev = nullptr;
@@ -164,7 +167,7 @@ rossat_color from_rgba(const GdkRGBA &c)
 struct gui_prefs {
     bool tray = false;
     bool start_minimized = false;
-    bool engine = false;
+    bool auto_apply = false;
 };
 
 std::string prefs_path()
@@ -179,7 +182,7 @@ gui_prefs load_prefs()
     if (g_key_file_load_from_file(kf, prefs_path().c_str(), G_KEY_FILE_NONE, nullptr)) {
         p.tray = g_key_file_get_boolean(kf, "gui", "tray", nullptr);
         p.start_minimized = g_key_file_get_boolean(kf, "gui", "start_minimized", nullptr);
-        p.engine = g_key_file_get_boolean(kf, "gui", "engine", nullptr);
+        p.auto_apply = g_key_file_get_boolean(kf, "gui", "auto_apply", nullptr);
     }
     g_key_file_unref(kf);
     return p;
@@ -191,7 +194,8 @@ void save_prefs(const gui_prefs &p)
     g_key_file_load_from_file(kf, prefs_path().c_str(), G_KEY_FILE_KEEP_COMMENTS, nullptr);
     g_key_file_set_boolean(kf, "gui", "tray", p.tray);
     g_key_file_set_boolean(kf, "gui", "start_minimized", p.start_minimized);
-    g_key_file_set_boolean(kf, "gui", "engine", p.engine);
+    g_key_file_remove_key(kf, "gui", "engine", nullptr); // pre-1.0.1 setting
+    g_key_file_set_boolean(kf, "gui", "auto_apply", p.auto_apply);
     std::string dir = std::string(g_get_user_config_dir()) + "/rossat";
     g_mkdir_with_parents(dir.c_str(), 0755);
     g_key_file_save_to_file(kf, prefs_path().c_str(), nullptr);
@@ -200,6 +204,7 @@ void save_prefs(const gui_prefs &p)
 
 void tray_sync(app_state *s);
 void store_prefs(app_state *s);
+void schedule_auto_apply(app_state *s);
 
 // defined further down, used by the drawing and fill code
 uint8_t current_effect(app_state *s);
@@ -578,7 +583,8 @@ void set_controls_sensitive(app_state *s, bool on)
         gtk_widget_set_sensitive(gtk_notebook_get_nth_page(GTK_NOTEBOOK(s->notebook), i), on);
     gtk_widget_set_sensitive(s->dpi_panel, on);
     gtk_widget_set_sensitive(s->polling_panel, on);
-    gtk_widget_set_sensitive(s->apply_button, on);
+    gtk_widget_set_sensitive(s->apply_button,
+                             on && !(s->auto_apply && gtk_switch_get_active(GTK_SWITCH(s->auto_apply))));
     gtk_widget_set_sensitive(s->activate_button, on);
     for (GtkWidget *b : s->profile_buttons)
         gtk_widget_set_sensitive(b, on);
@@ -589,7 +595,7 @@ void update_profile_buttons(app_state *s)
     s->updating = true;
     for (int i = 0; i < ROSSAT_PROFILE_COUNT; ++i) {
         char text[32];
-        std::snprintf(text, sizeof text, i == s->active_profile ? "PROFILE %d  ●" : "PROFILE %d", i + 1);
+        std::snprintf(text, sizeof text, i == s->active_profile ? "%d ●" : "%d", i + 1);
         gtk_button_set_label(GTK_BUTTON(s->profile_buttons[i]), text);
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->profile_buttons[i]), i == s->edit_profile);
     }
@@ -965,6 +971,7 @@ void on_reset_buttons(GtkButton *, gpointer data)
     }
     s->updating = false;
     set_status(s, "Factory layout loaded — press APPLY to write it", nullptr);
+    schedule_auto_apply(s);
 }
 
 GtkWidget *build_buttons_page(app_state *s)
@@ -1040,6 +1047,7 @@ void apply_group_color(app_state *s, std::initializer_list<int> leds)
     for (int i : leds)
         gtk_color_chooser_set_rgba(GTK_COLOR_CHOOSER(s->led_color[i]), &rgba);
     gtk_widget_queue_draw(s->mouse_light);
+    schedule_auto_apply(s);
 }
 
 void on_group_all(GtkButton *, gpointer d) { apply_group_color(static_cast<app_state *>(d), {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10}); }
@@ -1140,61 +1148,53 @@ gboolean on_draw_swatch(GtkWidget *w, cairo_t *cr, gpointer data)
     return FALSE;
 }
 
-gboolean engine_status_tick(gpointer data);
+gboolean engine_tick(gpointer data);
 
+// Status line under the effect: who is drawing the active profile's lighting.
 void set_engine_label(app_state *s)
 {
     if (!s->engine) {
-        gtk_label_set_text(GTK_LABEL(s->engine_label), "Off \u2014 software effects only run while an engine is active");
+        gtk_label_set_text(GTK_LABEL(s->engine_label),
+                           s->engine_busy ? "Lighting engine: handled by `rossat-cli engine` / the rossat-engine service"
+                                          : "Lighting engine: not running");
         return;
     }
     rossat_engine_status st;
     rossat_engine_get_status(s->engine, &st);
     char msg[160];
     if (st.last_error != ROSSAT_OK)
-        std::snprintf(msg, sizeof msg, "Running \u2014 %s", rossat_strerror(st.last_error));
+        std::snprintf(msg, sizeof msg, "Lighting engine: %s", rossat_strerror(st.last_error));
     else if (st.profile == 0xff)
-        std::snprintf(msg, sizeof msg, "Starting\u2026");
+        std::snprintf(msg, sizeof msg, "Lighting engine: starting\u2026");
     else {
         const char *n = rossat_effect_name(st.effect);
-        std::snprintf(msg, sizeof msg, "Running \u2014 profile %d: %s %s", st.profile + 1, n ? n : "?",
-                      st.rendering ? "(drawn by rossat)" : "(drawn by the mouse)");
+        std::snprintf(msg, sizeof msg, "Active profile %d: %s, %s", st.profile + 1, n ? n : "?",
+                      st.rendering ? "drawn by rossat" : "drawn by the mouse");
     }
     gtk_label_set_text(GTK_LABEL(s->engine_label), msg);
 }
 
-gboolean engine_status_tick(gpointer data)
+// The GUI runs the engine for as long as it is open (window or tray); it idles
+// while the active profile is drawn by the mouse. If another engine (CLI or
+// the user service) holds the lock, retry every few seconds.
+void start_engine(app_state *s)
 {
-    auto *s = static_cast<app_state *>(data);
-    if (!s->engine)
-        return G_SOURCE_REMOVE;
+    if (s->engine)
+        return;
+    int r = rossat_engine_start(nullptr, ROSSAT_ENGINE_AUTO, &s->engine);
+    if (r != ROSSAT_OK)
+        s->engine = nullptr;
+    s->engine_busy = r == ROSSAT_ERR_BUSY;
     set_engine_label(s);
-    return G_SOURCE_CONTINUE;
 }
 
-void on_engine_toggled(GObject *sw, GParamSpec *, gpointer data)
+gboolean engine_tick(gpointer data)
 {
     auto *s = static_cast<app_state *>(data);
-    bool on = gtk_switch_get_active(GTK_SWITCH(sw));
-    if (on && !s->engine) {
-        int r = rossat_engine_start(nullptr, ROSSAT_ENGINE_AUTO, &s->engine);
-        if (r != ROSSAT_OK) {
-            s->engine = nullptr;
-            gtk_switch_set_active(GTK_SWITCH(sw), FALSE);
-            gtk_label_set_text(GTK_LABEL(s->engine_label),
-                               r == ROSSAT_ERR_BUSY ? "Another engine is already running (rossat-cli engine or the service)"
-                                                    : rossat_strerror(r));
-            return;
-        }
-        g_timeout_add(500, engine_status_tick, s);
-    } else if (!on && s->engine) {
-        rossat_engine_stop(s->engine);
-        s->engine = nullptr;
-    }
+    if (!s->engine && ++s->engine_retry % 10 == 0)
+        start_engine(s);
     set_engine_label(s);
-    tray_sync(s);
-    if (!s->updating)
-        store_prefs(s);
+    return G_SOURCE_CONTINUE;
 }
 
 void on_render_toggled(GtkToggleButton *, gpointer data)
@@ -1252,7 +1252,7 @@ GtkWidget *build_illumination_page(app_state *s)
                                 "The PC draws the effect (the mouse stores AIMO). Needed for a custom "
                                 "Easy-Shift[+] colour; requires the engine to run.");
     g_signal_connect(s->render_engine, "toggled", G_CALLBACK(on_render_toggled), s);
-    GtkWidget *effbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    GtkWidget *effbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_box_pack_start(GTK_BOX(effbox), s->effect, TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(effbox), s->render_engine, FALSE, FALSE, 0);
     gtk_grid_attach(GTK_GRID(eg), label("EFFECT"), 0, 0, 1, 1);
@@ -1280,20 +1280,16 @@ GtkWidget *build_illumination_page(app_state *s)
     gtk_grid_attach(GTK_GRID(eg), label("AIMO THEME"), 0, 3, 1, 1);
     gtk_grid_attach(GTK_GRID(eg), tb, 1, 3, 1, 1);
 
-    GtkWidget *engb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    s->engine_switch = gtk_switch_new();
-    gtk_widget_set_valign(s->engine_switch, GTK_ALIGN_CENTER);
-    g_signal_connect(s->engine_switch, "notify::active", G_CALLBACK(on_engine_toggled), s);
     s->engine_label = label("", "rs-hint");
     gtk_label_set_line_wrap(GTK_LABEL(s->engine_label), TRUE);
-    gtk_box_pack_start(GTK_BOX(engb), s->engine_switch, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(engb), s->engine_label, TRUE, TRUE, 0);
-    gtk_grid_attach(GTK_GRID(eg), label("ENGINE"), 0, 4, 1, 1);
-    gtk_grid_attach(GTK_GRID(eg), engb, 1, 4, 1, 1);
-    GtkWidget *ehint = label("Effects marked (engine) are drawn by the PC, like in Swarm: keep the engine running "
-                             "here or run `rossat-cli engine` / the rossat-engine user service. "
+    gtk_label_set_max_width_chars(GTK_LABEL(s->engine_label), 60);
+    gtk_grid_attach(GTK_GRID(eg), s->engine_label, 1, 4, 1, 1);
+    GtkWidget *ehint = label("\"Render with rossat engine\" lets the PC draw the effect (always on for effects "
+                             "marked engine). rossat-swarm does this while it is open or in the tray; without "
+                             "the GUI use `rossat-cli engine` or the rossat-engine user service. "
                              "AIMO uses the colour theme instead of the per-LED colours.", "rs-hint");
     gtk_label_set_line_wrap(GTK_LABEL(ehint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(ehint), 60);
     gtk_grid_attach(GTK_GRID(eg), ehint, 0, 5, 2, 1);
     gtk_box_pack_start(GTK_BOX(right), box_panel("LIGHTING EFFECT", eg), FALSE, FALSE, 0);
 
@@ -1354,6 +1350,7 @@ GtkWidget *build_illumination_page(app_state *s)
     gtk_grid_attach(GTK_GRID(sg), srow, 0, 0, 1, 1);
     s->shift_hint = label("", "rs-hint");
     gtk_label_set_line_wrap(GTK_LABEL(s->shift_hint), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(s->shift_hint), 60);
     gtk_grid_attach(GTK_GRID(sg), s->shift_hint, 0, 1, 1, 1);
     gtk_box_pack_start(GTK_BOX(right), box_panel("EASY-SHIFT[+] LIGHTING", sg), FALSE, FALSE, 0);
 
@@ -1559,14 +1556,6 @@ void on_tray_show(GtkMenuItem *, gpointer data)
         show_window(s);
 }
 
-void on_tray_engine(GtkCheckMenuItem *item, gpointer data)
-{
-    auto *s = static_cast<app_state *>(data);
-    if (s->updating)
-        return;
-    gtk_switch_set_active(GTK_SWITCH(s->engine_switch), gtk_check_menu_item_get_active(item));
-}
-
 void on_tray_quit(GtkMenuItem *, gpointer data)
 {
     auto *s = static_cast<app_state *>(data);
@@ -1600,12 +1589,9 @@ void tray_sync(app_state *s)
         GtkWidget *menu = gtk_menu_new();
         s->tray_show_item = gtk_menu_item_new_with_label("Show Rossat Swarm");
         g_signal_connect(s->tray_show_item, "activate", G_CALLBACK(on_tray_show), s);
-        s->tray_engine_item = gtk_check_menu_item_new_with_label("Lighting engine");
-        g_signal_connect(s->tray_engine_item, "toggled", G_CALLBACK(on_tray_engine), s);
         GtkWidget *quit = gtk_menu_item_new_with_label("Quit");
         g_signal_connect(quit, "activate", G_CALLBACK(on_tray_quit), s);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), s->tray_show_item);
-        gtk_menu_shell_append(GTK_MENU_SHELL(menu), s->tray_engine_item);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), gtk_separator_menu_item_new());
         gtk_menu_shell_append(GTK_MENU_SHELL(menu), quit);
         gtk_widget_show_all(menu);
@@ -1616,9 +1602,6 @@ void tray_sync(app_state *s)
     app_indicator_set_status(s->indicator, APP_INDICATOR_STATUS_ACTIVE);
     gtk_menu_item_set_label(GTK_MENU_ITEM(s->tray_show_item),
                             gtk_widget_get_visible(s->window) ? "Hide Rossat Swarm" : "Show Rossat Swarm");
-    s->updating = true;
-    gtk_check_menu_item_set_active(GTK_CHECK_MENU_ITEM(s->tray_engine_item), s->engine != nullptr);
-    s->updating = false;
 #else
     (void)s;
 #endif
@@ -1639,7 +1622,7 @@ void store_prefs(app_state *s)
     gui_prefs p;
     p.tray = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(s->pref_tray));
     p.start_minimized = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(s->pref_start_min));
-    p.engine = s->engine != nullptr;
+    p.auto_apply = gtk_switch_get_active(GTK_SWITCH(s->auto_apply));
     save_prefs(p);
 }
 
@@ -1662,6 +1645,80 @@ void on_pref_start_min(GtkToggleButton *, gpointer data)
         store_prefs(s);
 }
 
+/* ---- auto apply ------------------------------------------------------- */
+
+gboolean auto_apply_fire(gpointer data)
+{
+    auto *s = static_cast<app_state *>(data);
+    s->auto_apply_source = 0;
+    if (s->dev && s->loaded)
+        on_apply(nullptr, s);
+    return G_SOURCE_REMOVE;
+}
+
+void schedule_auto_apply(app_state *s)
+{
+    if (s->updating || !s->loaded || !s->auto_apply ||
+        !gtk_switch_get_active(GTK_SWITCH(s->auto_apply)))
+        return;
+    if (s->auto_apply_source)
+        g_source_remove(s->auto_apply_source);
+    if (s->engine_source)
+        g_source_remove(s->engine_source);
+    // debounce: one write after the user stops dragging / typing
+    s->auto_apply_source = g_timeout_add(700, auto_apply_fire, s);
+}
+
+void on_any_change(GtkWidget *, gpointer data)
+{
+    schedule_auto_apply(static_cast<app_state *>(data));
+}
+
+void on_any_notify(GObject *, GParamSpec *, gpointer data)
+{
+    schedule_auto_apply(static_cast<app_state *>(data));
+}
+
+// Connects every editing widget below `w` to the auto-apply debouncer.
+// Widgets tagged "rs-no-autoapply" (app preferences, engine switch) are skipped.
+void hook_auto_apply(app_state *s, GtkWidget *w)
+{
+    if (g_object_get_data(G_OBJECT(w), "rs-no-autoapply"))
+        return;
+    if (GTK_IS_SPIN_BUTTON(w))
+        g_signal_connect(w, "value-changed", G_CALLBACK(on_any_change), s);
+    else if (GTK_IS_ENTRY(w))
+        g_signal_connect(w, "changed", G_CALLBACK(on_any_change), s);
+    else if (GTK_IS_COLOR_BUTTON(w))
+        g_signal_connect(w, "color-set", G_CALLBACK(on_any_change), s);
+    else if (GTK_IS_TOGGLE_BUTTON(w))
+        g_signal_connect(w, "toggled", G_CALLBACK(on_any_change), s);
+    else if (GTK_IS_COMBO_BOX(w))
+        g_signal_connect(w, "changed", G_CALLBACK(on_any_change), s);
+    else if (GTK_IS_RANGE(w))
+        g_signal_connect(w, "value-changed", G_CALLBACK(on_any_change), s);
+    else if (GTK_IS_SWITCH(w))
+        g_signal_connect(w, "notify::active", G_CALLBACK(on_any_notify), s);
+    if (GTK_IS_CONTAINER(w) && !GTK_IS_COMBO_BOX(w) && !GTK_IS_SPIN_BUTTON(w)) {
+        GList *children = gtk_container_get_children(GTK_CONTAINER(w));
+        for (GList *c = children; c; c = c->next)
+            hook_auto_apply(s, GTK_WIDGET(c->data));
+        g_list_free(children);
+    }
+}
+
+void on_auto_apply_toggled(GObject *sw, GParamSpec *, gpointer data)
+{
+    auto *s = static_cast<app_state *>(data);
+    bool on = gtk_switch_get_active(GTK_SWITCH(sw));
+    gtk_widget_set_sensitive(s->apply_button, !on && s->dev);
+    if (s->updating)
+        return;
+    store_prefs(s);
+    if (on)
+        set_status(s, "Auto apply on \u2014 changes are written to the mouse automatically", "connected");
+}
+
 void on_destroy(GtkWidget *, gpointer data)
 {
     auto *s = static_cast<app_state *>(data);
@@ -1669,6 +1726,8 @@ void on_destroy(GtkWidget *, gpointer data)
         g_source_remove(s->hotplug_source);
     if (s->preview_source)
         g_source_remove(s->preview_source);
+    if (s->auto_apply_source)
+        g_source_remove(s->auto_apply_source);
     if (s->engine)
         rossat_engine_stop(s->engine);
     if (s->dev)
@@ -1718,6 +1777,7 @@ GtkWidget *rossat_window_new(GtkApplication *app, bool force_minimized)
     gtk_box_pack_start(GTK_BOX(header), logo_box, FALSE, FALSE, 0);
     GtkWidget *dev = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     s->device_label = label("NO DEVICE", "rs-device-name");
+    gtk_label_set_ellipsize(GTK_LABEL(s->device_label), PANGO_ELLIPSIZE_END);
     s->status_label = label("", "rs-status");
     gtk_box_pack_start(GTK_BOX(dev), s->device_label, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(dev), s->status_label, FALSE, FALSE, 0);
@@ -1728,27 +1788,46 @@ GtkWidget *rossat_window_new(GtkApplication *app, bool force_minimized)
     // pages
     s->notebook = gtk_notebook_new();
     add_class(s->notebook, "rs-tabs");
-    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), build_settings_page(s), label("SETTINGS"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), build_buttons_page(s), label("BUTTON ASSIGNMENT"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), build_illumination_page(s), label("ILLUMINATION"));
-    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), build_advanced_page(s), label("ADVANCED SETTINGS"));
+    // pages scroll, so the window can be made smaller than its content
+    auto scrolled = [](GtkWidget *page) {
+        GtkWidget *sw = gtk_scrolled_window_new(nullptr, nullptr);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+        gtk_container_add(GTK_CONTAINER(sw), page);
+        return sw;
+    };
+    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), scrolled(build_settings_page(s)), label("SETTINGS"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), scrolled(build_buttons_page(s)), label("BUTTON ASSIGNMENT"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), scrolled(build_illumination_page(s)), label("ILLUMINATION"));
+    gtk_notebook_append_page(GTK_NOTEBOOK(s->notebook), scrolled(build_advanced_page(s)), label("ADVANCED SETTINGS"));
+    gtk_notebook_set_scrollable(GTK_NOTEBOOK(s->notebook), TRUE);
     gtk_box_pack_start(GTK_BOX(root), s->notebook, TRUE, TRUE, 0);
 
     // footer: profiles + actions
-    GtkWidget *footer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    // Two groups in a flow box: side by side when there is room, stacked on
+    // two rows in narrow windows.
+    GtkWidget *footer = gtk_flow_box_new();
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(footer), GTK_SELECTION_NONE);
+    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(footer), 1);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(footer), 2);
+    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(footer), 6);
     add_class(footer, "rs-footer");
+    GtkWidget *left = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    GtkWidget *right = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(left, GTK_ALIGN_START);
+    gtk_widget_set_halign(right, GTK_ALIGN_END);
+    gtk_box_pack_start(GTK_BOX(left), label("PROFILE", "rs-box-title"), FALSE, FALSE, 4);
     for (int i = 0; i < ROSSAT_PROFILE_COUNT; ++i) {
         GtkWidget *b = gtk_toggle_button_new_with_label("");
         add_class(b, "rs-profile");
         g_object_set_data(G_OBJECT(b), "profile", GINT_TO_POINTER(i));
         g_signal_connect(b, "toggled", G_CALLBACK(on_profile_toggled), s);
         s->profile_buttons[i] = b;
-        gtk_box_pack_start(GTK_BOX(footer), b, FALSE, FALSE, 0);
+        gtk_box_pack_start(GTK_BOX(left), b, FALSE, FALSE, 0);
     }
-    s->activate_button = gtk_button_new_with_label("SET AS ACTIVE");
+    s->activate_button = gtk_button_new_with_label("ACTIVATE");
     gtk_widget_set_tooltip_text(s->activate_button, "Make the profile being edited the mouse's active profile");
     g_signal_connect(s->activate_button, "clicked", G_CALLBACK(on_activate_profile), s);
-    gtk_box_pack_start(GTK_BOX(footer), s->activate_button, FALSE, FALSE, 12);
+    gtk_box_pack_start(GTK_BOX(left), s->activate_button, FALSE, FALSE, 12);
 
     s->apply_button = gtk_button_new_with_label("APPLY");
     add_class(s->apply_button, "suggested-action");
@@ -1756,17 +1835,34 @@ GtkWidget *rossat_window_new(GtkApplication *app, bool force_minimized)
     s->reload_button = gtk_button_new_with_label("RELOAD");
     gtk_widget_set_tooltip_text(s->reload_button, "Discard changes and read the profile from the mouse again");
     g_signal_connect(s->reload_button, "clicked", G_CALLBACK(on_reload), s);
-    gtk_box_pack_end(GTK_BOX(footer), s->apply_button, FALSE, FALSE, 0);
-    gtk_box_pack_end(GTK_BOX(footer), s->reload_button, FALSE, FALSE, 0);
+    s->auto_apply = gtk_switch_new();
+    gtk_widget_set_valign(s->auto_apply, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(s->auto_apply, "Write every change to the mouse automatically");
+    GtkWidget *aa = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_box_pack_start(GTK_BOX(aa), label("AUTO APPLY", "rs-hint"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(aa), s->auto_apply, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(right), s->apply_button, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(right), s->reload_button, FALSE, FALSE, 0);
+    gtk_box_pack_end(GTK_BOX(right), aa, FALSE, FALSE, 8);
+    gtk_container_add(GTK_CONTAINER(footer), left);
+    gtk_container_add(GTK_CONTAINER(footer), right);
     gtk_box_pack_start(GTK_BOX(root), footer, FALSE, FALSE, 0);
 
     update_profile_buttons(s);
     set_engine_label(s);
     g_signal_connect_swapped(s->window, "map", G_CALLBACK(connect_device), s);
 
+    // auto apply: hook every editing widget except app-level switches
+    for (GtkWidget *w : {s->pref_tray, s->pref_start_min, s->group_color})
+        g_object_set_data(G_OBJECT(w), "rs-no-autoapply", GINT_TO_POINTER(1));
+    hook_auto_apply(s, s->notebook);
+
     // restore application preferences
     gui_prefs prefs = load_prefs();
     s->updating = true;
+    g_signal_connect(s->auto_apply, "notify::active", G_CALLBACK(on_auto_apply_toggled), s);
+    gtk_switch_set_active(GTK_SWITCH(s->auto_apply), prefs.auto_apply);
+    gtk_widget_set_sensitive(s->apply_button, !prefs.auto_apply);
     g_signal_connect(s->pref_tray, "toggled", G_CALLBACK(on_pref_tray), s);
     g_signal_connect(s->pref_start_min, "toggled", G_CALLBACK(on_pref_start_min), s);
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(s->pref_tray), prefs.tray);
@@ -1775,9 +1871,10 @@ GtkWidget *rossat_window_new(GtkApplication *app, bool force_minimized)
 #ifdef ROSSAT_HAVE_TRAY
     s->tray_enabled = prefs.tray || force_minimized;
 #endif
-    if (prefs.engine)
-        gtk_switch_set_active(GTK_SWITCH(s->engine_switch), TRUE);
     s->updating = false;
+
+    start_engine(s);
+    s->engine_source = g_timeout_add(500, engine_tick, s);
 
     bool start_hidden = s->tray_enabled && (force_minimized || prefs.start_minimized);
     gtk_widget_show_all(root);

@@ -26,7 +26,8 @@ It ships three things:
 - Read/switch the active profile (5 on-board profiles)
 - DPI switcher: 5 levels, 100–16000 DPI in steps of 50, separate X/Y, enable mask, active level
 - Polling rate 125/250/500/1000 Hz, angle snapping, debounce time
-- Button assignment for all 12 buttons plus the Easy-Shift[+] layer, including shortcuts and text macros
+- Button assignment for all 12 buttons plus the Easy-Shift[+] layer, including shortcuts, text macros
+  and **brightness step up/down** buttons (10 logarithmic steps, handled by the lighting engine)
 - Lighting: effect, speed, brightness, colour and on/off for each of the 11 LEDs, AIMO colour themes
 - Lighting engine for the effects the firmware can't draw itself – **AIMO**, **Heartbeat**,
   Breathing 2.0, Heartbeat 2.0 – reacting to mouse activity like Swarm's AIMO engine
@@ -65,7 +66,7 @@ Every tag is built by [`.github/workflows/release.yml`](.github/workflows/releas
 `rossat-swarm-<tag>-x86_64.tar.gz`, laid out for `/usr`:
 
 ```sh
-sudo tar -xzf rossat-swarm-1.0.0-x86_64.tar.gz -C /
+sudo tar -xzf rossat-swarm-1.0.1-x86_64.tar.gz -C /
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
@@ -111,6 +112,7 @@ rossat-cli set effect=fully-lit brightness=200 led=all:#65c3f7 led=wheel:#ff0000
 rossat-cli buttons                      # button assignment of the active profile
 rossat-cli bind 9 shortcut ctrl+c       # thumb backward -> Ctrl+C
 rossat-cli bind shift+11 volume-up
+rossat-cli bind 8 brightness-up         # thumb forward: brightness step up (engine)
 rossat-cli macro -b 8 --text "gg wp"    # store a text macro on thumb forward
 rossat-cli set effect=aimo theme=3       # AIMO uses theme colours, not per-LED colours
 rossat-cli set effect=breathing render=engine
@@ -129,22 +131,31 @@ Profiles, DPI levels, buttons and LEDs are numbered from 1 on the command line.
 
 `rossat-swarm` opens the Swarm-style window (coloured by your GTK theme). The
 Button Assignment page takes shortcuts as text (`ctrl+c`, `alt+f4`) and text
-macros; the Illumination page has the effect list, AIMO themes, the engine
-switch and Easy-Shift[+] lighting; Advanced Settings has angle snapping,
-debounce, sensor calibration and the raw settings report.
+macros; the Illumination page has the effect list with the "Render with rossat
+engine" option, AIMO themes and Easy-Shift[+] lighting; Advanced Settings has
+angle snapping, debounce, sensor calibration and the raw settings report.
+
+The footer selects the profile being edited (● marks the active one),
+**ACTIVATE** makes it the mouse's active profile, and the **AUTO APPLY** switch
+writes every change to the mouse automatically (debounced) instead of waiting
+for **APPLY**. The pages scroll and the footer wraps, so the window works at
+small sizes too.
+
+While it is open – window or tray – the GUI runs the lighting engine itself,
+so engine-rendered effects, Easy-Shift[+] lighting and the brightness buttons
+just work.
 
 Under **Settings → Application**:
 
 - **Keep running in the system tray** – closing the window hides it to the tray
   (StatusNotifierItem, e.g. waybar, KDE, GNOME with the AppIndicator extension).
-  The tray menu shows/hides the window, toggles the lighting engine and quits.
+  The tray menu shows/hides the window and quits.
 - **Start minimized to the tray** – only available when the tray is enabled;
   starts without a window.
 
 `rossat-swarm --minimized` (or `-m`) starts hidden in the tray for that run,
 e.g. from your compositor's autostart (`exec-once = rossat-swarm --minimized`
-on Hyprland). The state of the GUI's lighting-engine switch is remembered, so
-a minimized start keeps AIMO / Easy-Shift lighting running. Preferences live in
+on Hyprland); the lighting engine keeps running in the tray. Preferences live in
 `~/.config/rossat/gui.ini`. Tray support needs `libayatana-appindicator3` at
 build time (optional).
 
@@ -152,20 +163,22 @@ build time (optional).
 
 The mouse firmware renders Off, Fully lit, Blinking, Breathing, Snake and
 Colorwave itself. **AIMO, Heartbeat, Breathing 2.0 and Heartbeat 2.0 are drawn
-by the PC** (exactly like Swarm does), so something has to run:
+by the PC** (exactly like Swarm does), as are profiles set to "Render with
+rossat engine", Easy-Shift[+] lighting and the brightness step buttons. One of
+these has to run:
 
-- the GUI's *Engine* switch on the Illumination page (while the window is open), or
+- `rossat-swarm` (window or tray, e.g. `rossat-swarm --minimized` in autostart), or
 - `rossat-cli engine` in a terminal, or
-- `rossat-swarm --minimized` with the engine switch left on (see above), or
-- the user service, to have it always on:
+- the user service, to have it always on without the GUI:
 
   ```sh
   systemctl --user enable --now rossat-engine.service   # installed by the packages / cmake --install
   ```
 
-Only one engine runs at a time. It follows the active profile, so switching
-profiles on the mouse switches effects too, and gives the LEDs back to the
-firmware when it stops.
+Only one engine runs at a time; the GUI shows when the service already owns it.
+The engine follows the active profile, so switching profiles on the mouse
+switches effects too, re-takes the LEDs whenever a profile write hands them back
+to the firmware, and returns them to the firmware when it stops.
 
 ## Library
 

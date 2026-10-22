@@ -33,7 +33,7 @@ extern "C" {
 
 #define ROSSAT_VERSION_MAJOR 1
 #define ROSSAT_VERSION_MINOR 0
-#define ROSSAT_VERSION_PATCH 0
+#define ROSSAT_VERSION_PATCH 1
 
 #define ROSSAT_VID                     0x1e7d
 #define ROSSAT_PID_KONE_AIMO_REMASTERED 0x2e2c
@@ -231,9 +231,6 @@ typedef enum rossat_button_type {
     ROSSAT_BT_DPI_CYCLE         = 0x14,
     ROSSAT_BT_DPI_UP            = 0x15,
     ROSSAT_BT_DPI_DOWN          = 0x16,
-    ROSSAT_BT_SENSITIVITY_CYCLE = 0x17,
-    ROSSAT_BT_SENSITIVITY_UP    = 0x18,
-    ROSSAT_BT_SENSITIVITY_DOWN  = 0x19,
     ROSSAT_BT_WINDOWS_KEY       = 0x1a,
     ROSSAT_BT_OPEN_DRIVER       = 0x1b,
     ROSSAT_BT_OPEN_PLAYER       = 0x20,
@@ -256,8 +253,19 @@ typedef enum rossat_button_type {
     ROSSAT_BT_EASYSHIFT_OTHER   = 0x51,
     ROSSAT_BT_EASYSHIFT_LOCK    = 0x52,
     ROSSAT_BT_EASYSHIFT_ALL     = 0x53,
-    ROSSAT_BT_EASYSHIFT_LOCK_ALL = 0x54
+    ROSSAT_BT_EASYSHIFT_LOCK_ALL = 0x54,
+    /* 0x8c..0xbb are "host actions": the firmware only reports them to the
+     * PC (input report [03 00 f2 N 00] on press, N = type - 0x8b). The
+     * rossat lighting engine implements these two: */
+    ROSSAT_BT_BRIGHTNESS_UP     = 0x8c, /* one brightness step up, needs the engine   */
+    ROSSAT_BT_BRIGHTNESS_DOWN   = 0x8d  /* one brightness step down, needs the engine */
 } rossat_button_type;
+
+/* Brightness levels used by the step buttons: 10 steps, logarithmic (each
+ * ~1.85x the previous, from the dimmest value 1) so dark and bright ends
+ * get equally many steps. */
+#define ROSSAT_BRIGHTNESS_LEVELS 11
+#define ROSSAT_BRIGHTNESS_LEVEL_TABLE {0, 1, 2, 3, 6, 11, 21, 39, 72, 134, 255}
 
 /* Modifier bits for ROSSAT_BT_SHORTCUT param1 (verified on hardware). */
 enum {

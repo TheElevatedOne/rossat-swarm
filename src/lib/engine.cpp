@@ -272,6 +272,10 @@ void run(rossat_engine *e)
     rossat_settings settings{};
     rossat_shift_lighting shift{};
     uint8_t engine_effect = ROSSAT_EFFECT_AIMO;
+    // brightness changed by a button, written to the mouse once presses stop
+    bool brightness_dirty = false;
+    auto brightness_changed_at = clock_type::now();
+    auto last_mode_check = clock_type::now();
     bool shift_held = false;
     uint8_t profile = 0xff;
     bool rendering = false;
@@ -384,12 +388,58 @@ void run(rossat_engine *e)
                     if (shift.enabled)
                         break; // react this frame
                 }
+            } else if (in[0] == 0x03 && n >= 5 && in[2] == 0xf2) {
+                // host action buttons: 03 00 f2 N 00 = press, ... 01 = release
+                if (in[4] == 0 && profile != 0xff && (in[3] == 1 || in[3] == 2)) {
+                    // logarithmic steps: snap to the nearest level, then move one
+                    static constexpr int levels[ROSSAT_BRIGHTNESS_LEVELS] = ROSSAT_BRIGHTNESS_LEVEL_TABLE;
+                    int idx = 0;
+                    for (int i = 1; i < ROSSAT_BRIGHTNESS_LEVELS; ++i)
+                        if (std::abs(levels[i] - settings.brightness) < std::abs(levels[idx] - settings.brightness))
+                            idx = i;
+                    idx = std::clamp(idx + (in[3] == 1 ? 1 : -1), 0, ROSSAT_BRIGHTNESS_LEVELS - 1);
+                    settings.brightness = static_cast<uint8_t>(levels[idx]);
+                    brightness_dirty = true;
+                    brightness_changed_at = clock_type::now();
+                    std::memset(last, 0xff, sizeof last);
+                }
             } else if (in[0] == 0x03 && n >= 3 && in[2] != 0xef) {
                 e->reload = true; // profile / DPI / other device events
             }
         }
         if (!dev)
             continue;
+
+        // Persist button brightness changes once the presses stop (the
+        // firmware effects only see the value stored in the profile).
+        if (brightness_dirty && clock_type::now() - brightness_changed_at > std::chrono::milliseconds(400)) {
+            brightness_dirty = false;
+            int r = rossat_write_settings(dev, &settings);
+            if (r != ROSSAT_OK) {
+                fail(r);
+                continue;
+            }
+            // storing a profile makes the firmware take the LEDs back
+            if (rendering && set_led_mode_fast(dev, true) != ROSSAT_OK) {
+                fail(ROSSAT_ERR_IO);
+                continue;
+            }
+            std::memset(last, 0xff, sizeof last);
+        }
+
+        // Any profile write (GUI, CLI, Swarm) returns the LEDs to the
+        // firmware; check once a second and take them back.
+        if (rendering && clock_type::now() - last_mode_check > std::chrono::seconds(1)) {
+            last_mode_check = clock_type::now();
+            uint8_t mode[6] = {0x0e};
+            if (hid_get_feature_report(dev->hid, mode, sizeof mode) == static_cast<int>(sizeof mode) && mode[3] == 0) {
+                if (set_led_mode_fast(dev, true) != ROSSAT_OK) {
+                    fail(ROSSAT_ERR_IO);
+                    continue;
+                }
+                std::memset(last, 0xff, sizeof last);
+            }
+        }
 
         now = clock_type::now();
         double dt = std::chrono::duration<double>(now - prev).count();

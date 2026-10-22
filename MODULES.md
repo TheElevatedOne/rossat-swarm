@@ -4,7 +4,7 @@ Every device module that ROCCAT Swarm 1.9482 can download, as returned by the of
 update server (`POST https://acpv.prod.turtlebeach.com/swarm1/autoupdate/SWARM`) when queried
 with each USB product ID listed in the bundled `settings.xml`. Module versions are as of 2026-10-21.
 
-A checked box means rossat-swarm supports the device (as of rossat-swarm 1.0.0).
+A checked box means rossat-swarm supports the device (as of rossat-swarm 1.0.1).
 The supported Kone AIMO Remastered was tested on hardware with firmware 1.05;
 see [README.md](README.md) for features and [docs/PROTOCOL.md](docs/PROTOCOL.md)
 for the protocol. `tools/re/allmods.py` regenerates this list from the update server.

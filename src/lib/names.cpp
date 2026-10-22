@@ -37,9 +37,6 @@ constexpr type_entry TYPES[] = {
     {ROSSAT_BT_DPI_CYCLE,         "dpi-cycle",         "DPI cycle"},
     {ROSSAT_BT_DPI_UP,            "dpi-up",            "DPI up"},
     {ROSSAT_BT_DPI_DOWN,          "dpi-down",          "DPI down"},
-    {ROSSAT_BT_SENSITIVITY_CYCLE, "sensitivity-cycle", "Sensitivity cycle"},
-    {ROSSAT_BT_SENSITIVITY_UP,    "sensitivity-up",    "Sensitivity up"},
-    {ROSSAT_BT_SENSITIVITY_DOWN,  "sensitivity-down",  "Sensitivity down"},
     {ROSSAT_BT_WINDOWS_KEY,       "windows-key",       "Windows key"},
     {ROSSAT_BT_OPEN_DRIVER,       "open-driver",       "Open driver"},
     {ROSSAT_BT_OPEN_PLAYER,       "open-player",       "Open media player"},
@@ -63,6 +60,8 @@ constexpr type_entry TYPES[] = {
     {ROSSAT_BT_EASYSHIFT_LOCK,    "easyshift-lock",    "Easy-Shift[+] lock"},
     {ROSSAT_BT_EASYSHIFT_ALL,     "easyshift-all",     "Easy-Shift[+] all devices"},
     {ROSSAT_BT_EASYSHIFT_LOCK_ALL,"easyshift-lock-all","Easy-Shift[+] lock all devices"},
+    {ROSSAT_BT_BRIGHTNESS_UP,     "brightness-up",     "Brightness step up (engine)"},
+    {ROSSAT_BT_BRIGHTNESS_DOWN,   "brightness-down",   "Brightness step down (engine)"},
 };
 
 constexpr const char *BUTTON_NAMES[ROSSAT_BUTTON_COUNT / 2] = {

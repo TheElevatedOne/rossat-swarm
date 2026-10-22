@@ -85,10 +85,11 @@ button label { letter-spacing: 1px; }
     padding: 8px 14px;
 }
 button.rs-profile {
-    min-width: 92px;
-    padding: 8px 6px;
+    min-width: 34px;
+    padding: 6px 10px;
 }
-button.rs-profile label { font-size: 10px; }
+.rs-footer .rs-box-title { border: none; margin: 0; padding: 0; }
+.rs-footer flowboxchild { padding: 0; background: none; }
 
 /* colour swatch buttons */
 button.rs-swatch {

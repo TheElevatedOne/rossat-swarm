@@ -5,7 +5,7 @@ HID **feature reports** on the interface whose report descriptor declares report
 ID `0x06`. Multi-byte values are little endian.
 
 Everything below was verified on a Kone AIMO Remastered (firmware 1.05)
-unless marked otherwise; rossat-swarm 1.0.0 implements all of it.
+unless marked otherwise; rossat-swarm 1.0.1 implements all of it.
 
 Source of truth: `ROCCAT_Swarm_Monitor.exe` (class `kone_aimo_base_device_c`,
 which does all device I/O) and the downloadable Swarm module `KONE_AIMO.dll`
@@ -137,7 +137,13 @@ Factory layout: `01 02 03 09 0a 0d 0e 07 08 41 15 16`, shift layer
 
 Function codes follow ROCCAT's common table (`0x01` click … `0x30` macro,
 `0x33`–`0x37` EasyAim, `0x41` Easy-Shift, `0x51`–`0x54` Easy-Shift variants);
-see `rossat_button_type` in `include/rossat/rossat.h`. For `0x05` (shortcut)
+see `rossat_button_type` in `include/rossat/rossat.h`. The firmware's
+dispatcher (`FUN_00003016`) shows `0x17`–`0x19` (sensitivity) do nothing on
+this mouse. Types `0x8c`–`0xbb` are host actions: the mouse only sends input
+report `[03 00 f2 N 00]` on press and `[03 00 f2 N 01]` on release
+(N = type − 0x8b); rossat maps N = 1/2 to brightness step up/down
+(levels `0 1 2 3 6 11 21 39 72 134 255`). Writing a profile hands the LEDs
+back to the firmware (`0x0e` reads `host = 0` afterwards). For `0x05` (shortcut)
 p1 is the modifier mask (Shift `0x02`, Ctrl `0x04`, Alt `0x08`, Win `0x10`)
 and p2 the HID key usage; the mouse sends it as a boot-keyboard report on
 interface 1 (verified on hardware).
