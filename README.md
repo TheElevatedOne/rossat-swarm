@@ -1,6 +1,7 @@
 # rossat-swarm
 
-![Static Badge](https://img.shields.io/badge/CLAUDE-VIBECODED?style=for-the-badge&logo=claude&label=VIBECODED&labelColor=%23333333&color=%23de7356)
+![Static Badge](https://img.shields.io/badge/CLAUDE-VIBECODED?style=for-the-badge&logo=claude&label=VIBECODED&labelColor=%23333333&color=%23de7356) [![AUR Version](https://img.shields.io/aur/version/rossat-swarm-git?style=for-the-badge&logo=archlinux)](https://aur.archlinux.org/packages/rossat-swarm-git) [![AUR Version](https://img.shields.io/aur/version/rossat-swarm-bin?style=for-the-badge&logo=archlinux)](https://aur.archlinux.org/packages/rossat-swarm-bin)
+
 
 <p align="center"><img src="data/rossat-swarm.svg" alt="rossat-swarm icon" width="128"></p>
 
