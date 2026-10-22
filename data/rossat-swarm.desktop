@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Rossat Swarm
+GenericName=Mouse configuration
+Comment=Configure ROCCAT Kone AIMO Remastered profiles, DPI, buttons and lighting
+Exec=rossat-swarm
+Icon=rossat-swarm
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=roccat;swarm;mouse;kone;aimo;dpi;rgb;

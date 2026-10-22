@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: rossat
+Description: Open re-implementation of ROCCAT Swarm device control
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lrossat
+Cflags: -I${includedir}

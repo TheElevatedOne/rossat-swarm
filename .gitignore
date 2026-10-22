@@ -1,0 +1,11 @@
+/build/
+/build-*/
+*.zip
+*.exe
+.cache/
+compile_commands.json
+/.claude/
+/aur/*/src/
+/aur/*/pkg/
+/aur/*/rossat-swarm/
+/aur/*/*.tar.*

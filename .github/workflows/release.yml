@@ -1,0 +1,64 @@
+name: Build and release
+
+on:
+  push:
+    tags:
+      - '*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git cmake ninja pkgconf hidapi gtk3 glib2 libayatana-appindicator
+
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          tag="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            git fetch --tags --force
+            tag="$(git describe --tags --abbrev=0)"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "archive=rossat-swarm-${tag}-x86_64.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build build
+
+      - name: Test (offline codec tests, no device needed)
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          DESTDIR="$PWD/stage" cmake --install build
+          install -Dm644 README.md stage/usr/share/doc/rossat-swarm/README.md
+          install -Dm644 docs/PROTOCOL.md stage/usr/share/doc/rossat-swarm/PROTOCOL.md
+          install -Dm644 LICENSE stage/usr/share/doc/rossat-swarm/LICENSE
+          tar -C stage -czf "${{ steps.version.outputs.archive }}" usr
+          sha256sum "${{ steps.version.outputs.archive }}" > "${{ steps.version.outputs.archive }}.sha256"
+          tar -tzf "${{ steps.version.outputs.archive }}"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: rossat-swarm ${{ steps.version.outputs.tag }}
+          files: |
+            ${{ steps.version.outputs.archive }}
+            ${{ steps.version.outputs.archive }}.sha256

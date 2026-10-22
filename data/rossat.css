@@ -1,0 +1,98 @@
+/* rossat-swarm GTK3 stylesheet.
+ * Layout and typography follow ROCCAT Swarm (header bar, underlined page
+ * tabs, boxed panels with uppercase titles, profile bar in the footer).
+ * All colours come from the active GTK theme. */
+
+window.rossat {
+    font-family: "Eurostile", "Eurostile LT Std", "Michroma", "Saira Condensed",
+                 "Rajdhani", sans-serif;
+}
+
+/* ---- header ---------------------------------------------------------- */
+.rs-header {
+    border-bottom: 1px solid @borders;
+    padding: 8px 16px;
+}
+.rs-brand {
+    font-size: 22px;
+    font-weight: bold;
+    letter-spacing: 4px;
+}
+.rs-brand-sub {
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: @theme_selected_bg_color;
+}
+.rs-device-name {
+    font-size: 15px;
+    letter-spacing: 2px;
+}
+.rs-status {
+    font-size: 10px;
+    letter-spacing: 1px;
+    opacity: 0.7;
+}
+.rs-status.connected { color: @theme_selected_bg_color; opacity: 1; }
+.rs-status.error     { color: @error_color; opacity: 1; }
+
+/* ---- page tabs ------------------------------------------------------- */
+notebook.rs-tabs > header {
+    border-bottom: 1px solid @borders;
+    padding: 0 12px;
+}
+notebook.rs-tabs > header > tabs > tab {
+    border: none;
+    border-bottom: 3px solid transparent;
+    padding: 10px 18px 7px 18px;
+    margin: 0;
+}
+notebook.rs-tabs > header > tabs > tab label {
+    font-size: 12px;
+    letter-spacing: 2px;
+}
+notebook.rs-tabs > header > tabs > tab:checked {
+    border-bottom-color: @theme_selected_bg_color;
+}
+
+/* ---- control boxes --------------------------------------------------- */
+.rs-box {
+    border: 1px solid @borders;
+    border-radius: 4px;
+    padding: 12px 14px;
+}
+.rs-box-title {
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 2px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid @borders;
+    margin-bottom: 8px;
+}
+.rs-hint {
+    font-size: 10px;
+    opacity: 0.7;
+}
+.rs-value {
+    color: @theme_selected_bg_color;
+    font-weight: bold;
+}
+
+button label { letter-spacing: 1px; }
+
+/* profile slots in the footer */
+.rs-footer {
+    border-top: 1px solid @borders;
+    padding: 8px 14px;
+}
+button.rs-profile {
+    min-width: 92px;
+    padding: 8px 6px;
+}
+button.rs-profile label { font-size: 10px; }
+
+/* colour swatch buttons */
+button.rs-swatch {
+    min-width: 26px;
+    min-height: 26px;
+    padding: 0;
+}
